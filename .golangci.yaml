@@ -1,0 +1,14 @@
+version: 2
+linters:
+  enable:
+    - sloglint
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+  disable:
+    - errcheck
+    
+linters-settings:
+  sloglint:
+    key-naming-case: snake

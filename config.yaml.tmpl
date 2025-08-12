@@ -1,0 +1,30 @@
+app:
+  name: "rumi-go"
+  env: "local"
+  api_prefix: "rumi-go"
+
+server:
+  port: "8080"
+
+redis:
+  address: "localhost"
+  password: ""
+  port: "6379"
+  db: 0
+
+database:
+  driver: mysql
+  name: rumi
+  host: localhost
+  port: 3306
+  user: root
+  password: root
+  max_open: 50
+  max_idle: 10
+  max_life_time: 3m
+  max_idle_time: 3m
+  statement_timeout: 3s
+
+jwt:
+  secret: "secret"
+  expiration: 24
