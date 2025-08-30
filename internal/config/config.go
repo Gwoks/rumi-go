@@ -2,174 +2,141 @@ package config
 
 import (
 	"fmt"
-	"log"
+	"os"
+	"strconv"
 	"strings"
 
-	"rumi-go/internal/database"
-
-	"github.com/spf13/viper"
+	"github.com/joho/godotenv"
 )
 
-var c Config
-
 type Config struct {
-	App         AppConfig       `mapstructure:"app"`
-	Server      ServerConfig    `mapstructure:"server"`
-	Redis       RedisConfig     `mapstructure:"redis"`
-	JWT         JWTConfig       `mapstructure:"jwt"`
-	Database    database.Config `mapstructure:"database"`
-	LogDatabase database.Config `mapstructure:"log_database"`
+	Database Database `json:"database"`
+	Server   Server   `json:"server"`
+	JWT      JWT      `json:"jwt"`
+	Security Security `json:"security"`
+	CORS     CORS     `json:"cors"`
 }
 
-type AppConfig struct {
-	Name      string `mapstructure:"name"`
-	Env       string `mapstructure:"env"`
-	ApiPrefix string `mapstructure:"api_prefix"`
+type Database struct {
+	Host     string `json:"host"`
+	Port     int    `json:"port"`
+	User     string `json:"user"`
+	Password string `json:"password"`
+	Name     string `json:"name"`
 }
 
-type ServerConfig struct {
-	Port int `mapstructure:"port"`
+type Server struct {
+	Host        string `json:"host"`
+	Port        int    `json:"port"`
+	Environment string `json:"environment"`
 }
 
-type RedisConfig struct {
-	Address  string `mapstructure:"address"`
-	Password string `mapstructure:"password"`
-	Port     string `mapstructure:"port"`
-	DB       int    `mapstructure:"db"`
+type JWT struct {
+	Secret      string `json:"secret"`
+	ExpiryHours int    `json:"expiry_hours"`
 }
 
-type JWTConfig struct {
-	Secret     string `mapstructure:"secret"`
-	Expiration int    `mapstructure:"expiration"` // in hours
+type Security struct {
+	BCryptCost int `json:"bcrypt_cost"`
 }
 
-// Load loads configuration from file and environment variables using Viper
-func Load(configPath string) error {
-	v := viper.New()
-
-	// Set default config file path
-	if configPath == "" {
-		configPath = "."
-	}
-
-	// Set config file name
-	v.SetConfigName("config")
-	v.SetConfigType("yaml")
-	v.AddConfigPath(configPath)
-
-	// Enable reading from environment variables
-	v.AutomaticEnv()
-	v.SetEnvPrefix("RUMI")
-	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
-
-	// Read config file
-	if err := v.ReadInConfig(); err != nil {
-		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
-			return fmt.Errorf("error reading config file: %w", err)
-		}
-		// Config file not found, continue with defaults and env vars
-	}
-
-	// Unmarshal configuration into struct
-	if err := v.Unmarshal(&c); err != nil {
-		return fmt.Errorf("unable to decode config into struct: %w", err)
-	}
-
-	return validate()
+type CORS struct {
+	AllowedOrigins []string `json:"allowed_origins"`
+	AllowedMethods []string `json:"allowed_methods"`
+	AllowedHeaders []string `json:"allowed_headers"`
 }
 
-// validate validates the configuration
-func validate() error {
-	// Validate required fields
-	if c.App.Name == "" {
-		return fmt.Errorf("app.name is required")
+// Load loads configuration from environment variables
+func Load() (*Config, error) {
+	// Load .env file if exists
+	_ = godotenv.Load()
+
+	config := &Config{
+		Database: Database{
+			Host:     getEnv("DB_HOST", "localhost"),
+			Port:     getEnvAsInt("DB_PORT", 3306),
+			User:     getEnv("DB_USER", "root"),
+			Password: getEnv("DB_PASSWORD", ""),
+			Name:     getEnv("DB_NAME", "rumi_db"),
+		},
+		Server: Server{
+			Host:        getEnv("SERVER_HOST", "0.0.0.0"),
+			Port:        getEnvAsInt("SERVER_PORT", 8080),
+			Environment: getEnv("ENVIRONMENT", "development"),
+		},
+		JWT: JWT{
+			Secret:      getEnv("JWT_SECRET", "default-secret-change-me"),
+			ExpiryHours: getEnvAsInt("JWT_EXPIRY_HOURS", 24),
+		},
+		Security: Security{
+			BCryptCost: getEnvAsInt("BCRYPT_COST", 12),
+		},
+		CORS: CORS{
+			AllowedOrigins: getEnvAsSlice("CORS_ALLOWED_ORIGINS", []string{"*"}),
+			AllowedMethods: getEnvAsSlice("CORS_ALLOWED_METHODS", []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"}),
+			AllowedHeaders: getEnvAsSlice("CORS_ALLOWED_HEADERS", []string{"Content-Type", "Authorization"}),
+		},
 	}
 
-	if c.Database.Name == "" {
-		return fmt.Errorf("database.name is required")
+	if err := config.validate(); err != nil {
+		return nil, err
 	}
 
-	if c.Database.Host == "" {
-		return fmt.Errorf("database.host is required")
-	}
+	return config, nil
+}
 
-	// Validate environment
-	validEnvs := []string{"local", "development", "staging", "production"}
-	isValidEnv := false
-	for _, env := range validEnvs {
-		if c.App.Env == env {
-			isValidEnv = true
-			break
-		}
+// validate checks if required configuration values are set
+func (c *Config) validate() error {
+	if c.Database.Password == "" {
+		return fmt.Errorf("DB_PASSWORD is required")
 	}
-	if !isValidEnv {
-		return fmt.Errorf("app.env must be one of: %s", strings.Join(validEnvs, ", "))
+	if c.JWT.Secret == "default-secret-change-me" && c.Server.Environment == "production" {
+		return fmt.Errorf("JWT_SECRET must be set in production")
 	}
-
-	// Validate port ranges
-	if c.Server.Port < 1 || c.Server.Port > 65535 {
-		return fmt.Errorf("server.port must be between 1 and 65535")
-	}
-
-	if c.Database.Port < 1 || c.Database.Port > 65535 {
-		return fmt.Errorf("database.port must be between 1 and 65535")
-	}
-
 	return nil
 }
 
-// Get returns the loaded configuration
-func Get() *Config {
-	return &c
+// GetDSN returns database connection string
+func (c *Config) GetDSN() string {
+	return fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local",
+		c.Database.User,
+		c.Database.Password,
+		c.Database.Host,
+		c.Database.Port,
+		c.Database.Name,
+	)
 }
 
-// GetApp returns app configuration
-func GetApp() AppConfig {
-	return c.App
+// IsDevelopment returns true if environment is development
+func (c *Config) IsDevelopment() bool {
+	return c.Server.Environment == "development"
 }
 
-// GetServer returns server configuration
-func GetServer() ServerConfig {
-	return c.Server
+// IsProduction returns true if environment is production
+func (c *Config) IsProduction() bool {
+	return c.Server.Environment == "production"
 }
 
-// GetRedis returns redis configuration
-func GetRedis() RedisConfig {
-	return c.Redis
+// Helper functions
+func getEnv(key, fallback string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return fallback
 }
 
-// GetJWT returns JWT configuration
-func GetJWT() JWTConfig {
-	return c.JWT
+func getEnvAsInt(key string, fallback int) int {
+	if value := os.Getenv(key); value != "" {
+		if intValue, err := strconv.Atoi(value); err == nil {
+			return intValue
+		}
+	}
+	return fallback
 }
 
-// GetDatabase returns database configuration
-func GetDatabase() database.Config {
-	return c.Database
-}
-
-// GetLogDatabase returns log database configuration
-func GetLogDatabase() database.Config {
-	return c.LogDatabase
-}
-
-// IsDevelopment returns true if running in development mode
-func IsDevelopment() bool {
-	return c.App.Env == "development" || c.App.Env == "local"
-}
-
-// IsProduction returns true if running in production mode
-func IsProduction() bool {
-	return c.App.Env == "production"
-}
-
-// PrintConfig prints the current configuration (without sensitive data)
-func PrintConfig() {
-	log.Printf("=== Configuration ===")
-	log.Printf("App: %s (env: %s)", c.App.Name, c.App.Env)
-	log.Printf("Server: Port %d", c.Server.Port)
-	log.Printf("Redis: %s:%s (db: %d)", c.Redis.Address, c.Redis.Port, c.Redis.DB)
-	log.Printf("Database: %s@%s:%d/%s", c.Database.User, c.Database.Host, c.Database.Port, c.Database.Name)
-	log.Printf("Log DB: %s@%s:%d/%s", c.LogDatabase.User, c.LogDatabase.Host, c.LogDatabase.Port, c.LogDatabase.Name)
-	log.Printf("====================")
+func getEnvAsSlice(key string, fallback []string) []string {
+	if value := os.Getenv(key); value != "" {
+		return strings.Split(value, ",")
+	}
+	return fallback
 }

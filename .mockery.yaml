@@ -1,4 +1,0 @@
-with-expecter: true
-dir: "{{.InterfaceDir}}/_mocks"
-outpkg: mocks
-packages:
