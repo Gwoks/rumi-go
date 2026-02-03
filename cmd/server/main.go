@@ -47,21 +47,24 @@ func main() {
 	// Initialize repositories
 	userRepo := repository.NewUserRepository(db)
 	userActivityRepo := repository.NewUserActivityRepository(db)
+	childRepo := repository.NewChildRepository(db)
 
 	// Initialize use cases
 	authUsecase := usecase.NewAuthUsecase(userRepo, userActivityRepo, jwtService, passwordService)
 	userManagementUsecase := usecase.NewUserManagementUsecase(userRepo, userActivityRepo, passwordService)
 	userActivityUsecase := usecase.NewUserActivityUsecase(userActivityRepo, userRepo)
+	childUsecase := usecase.NewChildUsecase(childRepo, userRepo)
 
 	// Initialize handlers
 	authHandler := handler.NewAuthHandler(authUsecase)
 	userHandler := handler.NewUserHandler(userManagementUsecase, userActivityUsecase)
+	childHandler := handler.NewChildHandler(childUsecase)
 
 	// Initialize middlewares
 	authMiddleware := middleware.NewAuthMiddleware(authUsecase)
 
 	// Setup router
-	router := setupRouter(cfg, authHandler, userHandler, authMiddleware)
+	router := setupRouter(cfg, authHandler, userHandler, childHandler, authMiddleware)
 
 	// Setup server
 	server := &http.Server{
@@ -102,7 +105,7 @@ func main() {
 }
 
 // setupRouter configures the Gin router with all routes and middleware
-func setupRouter(cfg *config.Config, authHandler *handler.AuthHandler, userHandler *handler.UserHandler, authMiddleware *middleware.AuthMiddleware) *gin.Engine {
+func setupRouter(cfg *config.Config, authHandler *handler.AuthHandler, userHandler *handler.UserHandler, childHandler *handler.ChildHandler, authMiddleware *middleware.AuthMiddleware) *gin.Engine {
 	router := gin.New()
 
 	// Global middleware
@@ -152,8 +155,15 @@ func setupRouter(cfg *config.Config, authHandler *handler.AuthHandler, userHandl
 				userHandler.GetUserActivities(c)
 			})
 
+			// Children routes
+			protected.GET("/children", childHandler.GetChildren)
+			protected.POST("/children", childHandler.CreateChild)
+			protected.GET("/children/:id", childHandler.GetChild)
+			protected.PUT("/children/:id", childHandler.UpdateChild)
+			protected.DELETE("/children/:id", childHandler.DeleteChild)
+
 			// Admin only routes
-			admin := protected.Group("")
+			admin := protected.Group("/admin")
 			admin.Use(authMiddleware.RequireAdmin())
 			{
 				// User management
@@ -166,6 +176,10 @@ func setupRouter(cfg *config.Config, authHandler *handler.AuthHandler, userHandl
 				// User activities management
 				admin.GET("/users/:id/activities", userHandler.GetUserActivities)
 				admin.GET("/activities", userHandler.GetAllActivities)
+
+				// Children management (admin only)
+				admin.GET("/children", childHandler.GetAllChildren)
+				admin.PUT("/children/:id/active", childHandler.SetChildActive)
 			}
 		}
 	}
